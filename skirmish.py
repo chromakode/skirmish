@@ -114,13 +114,11 @@ class IOPlayer(Player):
         self.out_stream.write(data)
 
     def get_move(self, msg):
-        self.write(make_resp("?", msg))
         code, msg, resp = self.skip_until_code("!", "=")
         if   code == "!": return msg.strip()
         elif code == "=": return resp
         
     def send_move(self, move):
-        code, msg, resp = self.skip_until_code("?")
         self.write(make_resp("!", move))
         
     def get_result(self):
