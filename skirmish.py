@@ -5,10 +5,33 @@ import subprocess
 from urlparse import urlparse, ParseResult
 from optparse import OptionParser
 
-BUF_SIZE = 1024
 DEFAULT_IMCS_PORT = 3589
 VERBOSE = False
-VERSION = "0.1"
+VERSION = "0.2"
+
+class ProtocolError(Exception):
+    def __init__(self, resp, explain=None):
+        self.resp = resp
+        self.explain = explain
+    
+    def __str__(self):
+        if self.explain:
+            return "%s; %s" % (repr(self.resp), self.explain)
+        else:
+            return repr(self.resp)
+
+class ExpectedCodeError(ProtocolError):
+    def __init__(self, codes, expected, resp, explain=None):
+        explain = explain or "expected codes: %s" % expected
+        ProtocolError.__init__(self, resp, explain)
+        self.code = code
+        self.expected = expected
+
+class InvalidServerError(Exception): pass
+class InvalidURLError(Exception): pass
+class GameNotFoundError(Exception): pass
+class AuthenticationError(Exception): pass
+class MoveError(Exception): pass
 
 class Color:
     def __init__(self, short, name, val):
@@ -31,195 +54,170 @@ def read_color(val):
         if val == color.short.lower() or val == color.name.lower() or val == color.val:
             return color
 
-class ProtocolError(Exception):
-    def __init__(self, resp, explain=None):
-        self.resp = resp
-        self.explain = explain
+def log(section, text, verbose=False, line_prefix=""):
+    if not verbose or VERBOSE:
+        section_prefix = ("[%s] " % section) + line_prefix
+        text = text.strip().replace("\n", "\n"+section_prefix)
+        print section_prefix + text
+        
+def logger(section):
+    def do_log(text, verbose=False, line_prefix=""):
+        log(section, text, verbose, line_prefix)
+        
+    return do_log
     
-    def __str__(self):
-        if self.explain:
-            return "%s; %s" % (repr(self.resp), self.explain)
-        else:
-            return repr(self.resp)
+def io_logger(logger):
+    def do_log(line_prefix, text):
+        logger(text, True, line_prefix+" ")
 
-class ExpectedCodeError(ProtocolError):
-    def __init__(self, code, expected, resp, explain=None):
-        explain = explain or "expected code: %s" % expected
-        ProtocolError.__init__(self, resp, explain)
-        self.code = code
-        self.expected = expected
+    return do_log
 
-class InvalidServerError(Exception): pass
-class InvalidURLError(Exception): pass
-class GameNotFoundError(Exception): pass
-class AuthenticationError(Exception): pass
-class MoveError(Exception): pass
-
-def parse_resp(resp):
-    code, sep, msg = resp.partition(" ")
-    if sep:
+class CodedConversation(object):
+    def __init__(self, in_stream, out_stream, logger=None):
+        self.in_stream = in_stream
+        self.out_stream = out_stream
+        self.logger = logger
+        
+    def _parse_msg(self, resp):
+        code, sep, msg = resp.strip().partition(" ")
         try:
             code = int(code)
         except ValueError:
             pass
             
         return code, msg, resp
-    else:
-        return None, msg, resp
 
-def make_resp(code, msg):
-    return "%s %s\n" % (code, msg)
+    def receive_line(self):
+        line = self.in_stream.readline()
+        self.logger("->", line)
+        return line
 
-def log(section, text, verbose=False, line_prefix=""):
-    if not verbose or VERBOSE:
-        section_prefix = ("[%s] " % section) + line_prefix
-        text = text.strip().replace("\n", "\n"+section_prefix)
-        print section_prefix + text
-  
+    def expect(self, *codes):
+        line = self.receive_line()
+        
+        code, msg, resp = self._parse_msg(line)
+        if code in codes:
+            return code, msg, resp
+        else:
+            raise ExpectedCodeError(codes, expected, resp)
+
+    def receive_until(self, *codes):
+        lines = []
+        while True:
+            line = self.receive_line()
+            if line:
+                lines.append(line)
+            else:
+                return None, None, None, None
+            
+            code, msg, resp = self._parse_msg(line)
+            if code in codes:
+                return code, msg, resp, "\n".join(lines)
+
+    def _make_msg(self, code, msg):
+        return "%s %s" % (code, msg)
+            
+    def send_line(self, line):
+        self.logger("<-", line)
+        self.out_stream.write(line+"\n")
+        self.out_stream.flush()
+
+    def send(self, code, data):
+        self.send_line(self._make_msg(code, data))
+
 class Player(object):
     def __init__(self, name):
         self.name = name
-        
-    def _log(self, text, verbose=False, line_prefix=""):
-        log(self.name, text, verbose, line_prefix)
-        
+        self.log = logger(name)
+
     def get_move(self, msg): raise NotImplementedError
     def send_move(self, move): raise NotImplementedError
     def get_result(self, move): raise NotImplementedError
+
+class IOPlayer(Player):
+    def __init__(self, name="IOPlayer", in_stream=None, out_stream=None, io=None):
+        Player.__init__(self, name)
+        if not io:
+            io = CodedConversation(in_stream or sys.stdin, out_stream or sys.stdout, io_logger(self.log))
+        self.io = io
+        
+    def get_move(self, msg):
+        code, msg, resp, text = self.io.receive_until("!", "=")
+        if   code == "!":  return msg.strip()
+        elif code == "=":  return resp
+        elif code == None: return None
+        
+    def send_move(self, move):
+        self.io.send("!", move)
+        
+    def get_result(self):
+        code, msg, resp, text = self.io.receive_until("=")
+        return resp
 
 def ProcessPlayer(command):
     process = subprocess.Popen(command, shell=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE, close_fds=True)
     command_name = os.path.basename(command.partition(" ")[0])
     return IOPlayer("Process:%s" % command_name, process.stdout, process.stdin)
 
-class IOPlayer(Player):
-    def __init__(self, name="IOPlayer", in_stream=None, out_stream=None):
-        Player.__init__(self, name)
-        self.in_stream = in_stream or sys.stdin
-        self.out_stream = out_stream or sys.stdout
-
-    def skip_until_code(self, *codes):
-        while True:
-            line = self.in_stream.readline()
-            if not line:
-                break
-            
-            code, msg, resp = parse_resp(line)
-            self._log(resp, True, "-> ")
-            if code in codes:
-                return code, msg, resp
-            
-    def write(self, data):
-        self._log(data, True, "<- ")
-        self.out_stream.write(data)
-
-    def get_move(self, msg):
-        code, msg, resp = self.skip_until_code("!", "=")
-        if   code == "!": return msg.strip()
-        elif code == "=": return resp
-        
-    def send_move(self, move):
-        self.write(make_resp("!", move))
-        
-    def get_result(self):
-        code, msg, resp = self.skip_until_code("=")
-        return resp
-
-class ServerPlayer(Player):
-    def __init__(self, name, server):
-        Player.__init__(self, name)
-        self.server = server
-
-    def get_move(self, msg):
-        try:
-            return self.server.expect_resp("!")
-        except ExpectedCodeError, e:
-            if e.code == "=":
-                return e.resp
-            else:
-                raise e
+class ServerPlayer(IOPlayer):
+    def __init__(self, name, io):
+        IOPlayer.__init__(self, name, io=io)
     
     def send_move(self, move):
-        self.server.expect_resp("?")
-        return self.server.send(move + "\n")
-        
-    def get_result(self):
-        return self.server.expect_resp("=")
+        self.io.receive_until("?")
+        return IOPlayer.send_move(self, move)
 
 class IMCSServer(object):
     def __init__(self, host, port):
         self.host = host
         self.port = port
-        self.socket = None
+        self.stream = None
+        self.io = None
         self.username = None
+        self.log = logger(self.name)
 
     @property
     def name(self):
         return "IMCS" + (":" + self.username if self.username else "")
-
-    def _log(self, text, verbose=False, line_prefix=""):
-        log(self.name, text, verbose, line_prefix)
-   
-    def get_data(self):
-        data = self.socket.recv(BUF_SIZE)
-        self._log(data, True, "-> ")
-        return data
-    
-    def get_resp(self):
-        resp = self.get_data()
-        
-        # Get last line
-        lines = filter(None, resp.split("\n"))
-        return lines[-1] if lines else None
-
-    def expect_resp(self, expected, explain=None, resp=None):
-        resp = resp or self.get_resp()
-        code, msg, resp = parse_resp(resp)
-        if code == expected:
-            return msg
-        else:
-            raise ExpectedCodeError(code, expected, resp, explain)
-        
-    def send(self, data):
-        self._log(data, True, "<- ")
-        return self.socket.send(data)
             
     def connect(self):
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.socket.connect((self.host, self.port))
-        self.expect_resp(100)
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.connect((self.host, self.port))
+
+        self.stream = sock.makefile("rw")
+        self.io = CodedConversation(self.stream, self.stream, io_logger(self.log))
+        self.io.expect(100)
 
     def disconnect(self):
-        self.send("quit\n")
-        self.socket.close()
+        self.io.send_line("quit")
+        self.stream.close()
         
     def login(self, username, password):
-        self.send("me %s %s\n" % (username, password))
+        self.io.send_line("me %s %s" % (username, password))
         
-        code, msg, resp = parse_resp(self.get_resp())
+        code, msg, resp = self.io.expect(201, 401)
         if code == 201:
-            self._log("Logged in as \"%s\"." % username)
+            self.log("Logged in as \"%s\"." % username)
             self.username = username
+            self.log = logger(self.name)
         elif code == 401:
             raise AuthenticationError(msg)
-        else:
-            raise ProtocolError(resp)
             
     def register(self, username, password):
-        self.send("register %s %s\n" % (username, password))
+        self.io.send_line("register %s %s" % (username, password))
         
-        code, msg, resp = parse_resp(self.get_resp())
+        code, msg, resp = self.io.expect(202, 402)
         if code == 202:
-            self._log("Registered new user \"%s\"." % username)
+            self.log("Registered new user \"%s\"." % username)
         elif code == 402:
             raise AuthenticationError(msg)
-        else:
-            raise ProtocolError(resp)
 
     def list_games(self):
-        self.send("list\n")
-        self.expect_resp(211)
-        lines = filter(None, self.get_data().split("\n"))
+        self.io.send_line("list")
+        self.io.expect(211)
+        
+        code, msg, resp, text = self.io.receive_until(".")
+        lines = filter(None, text.split("\n"))
         
         games = list()
         for line in lines:
@@ -239,31 +237,30 @@ class IMCSServer(object):
         return games
         
     def _make_player(self):
-        return ServerPlayer(self.name, self)
+        return ServerPlayer(self.name, self.io)
     
     def offer(self, color):
-        self.send("offer %s\n" % color)
+        self.io.send_line("offer %s" % color)
         try:
-            msg = self.expect_resp(101)
+            code, msg, resp = self.io.expect(101)
             gameid = msg.split(" ")[1]
         except:
             gameid = "???"
-        self._log("Offered new game as color %s (id: %s)." % (color, gameid))
+            
+        self.log("Offered new game as color %s (id: %s)." % (color, gameid))
         
-        self.expect_resp(102)
-        self._log("Offer accepted!")
+        self.io.expect(102)
+        self.log("Offer accepted!")
         return self._make_player()
 
     def accept(self, gameid):
-        self.send("accept %s\n" % gameid)
+        self.io.send_line("accept %s" % gameid)
         
-        code, msg, resp = parse_resp(self.get_resp())
+        code, msg, resp = self.io.expect(103, 408)
         if code == 103:
-            self._log("Accepted offer with ID %s" % gameid)
+            self.log("Accepted offer with ID %s" % gameid)
         elif code == 408:
             raise GameNotFoundError(msg)
-        else:
-            raise ProtocolError(resp)
             
         return self._make_player()
 
@@ -341,15 +338,21 @@ def game_loop(white_player, black_player, strict=False):
         log("Game", "Getting move for %s" % current.name.lower())
         move = players[current].get_move("%s to move." % current)
         
+        if not move:
+            print "Unable to fetch move. Quitting."
+            return
+        
         if move.startswith("="):
-            cur_result = parse_game_result(move)
+            cur_result_raw = move
+            cur_result = parse_game_result(cur_result_raw)
             
             if strict:
-                opp_result = parse_game_result(players[current.invert].get_result())
+                opp_result_raw = players[current.invert].get_result()
+                opp_result = parse_game_result(opp_result_raw)
                 if cur_result != opp_result:
                     print "Warning! Player game end states do not agree"
-                    print "\t%s: %s" % (current, repr(move))
-                    print "\t%s: %s" % (current.invert, repr(oppmove))                
+                    print "\t%s: %s" % (current, repr(cur_result_raw))
+                    print "\t%s: %s" % (current.invert, repr(opp_result_raw))
             
             if cur_result is not None:
                 print "%s wins." % cur_result
