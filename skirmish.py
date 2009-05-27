@@ -7,7 +7,7 @@ from optparse import OptionParser
 
 DEFAULT_IMCS_PORT = 3589
 VERBOSE = False
-VERSION = "0.2"
+VERSION = "0.2.1"
 
 class ProtocolError(Exception):
     def __init__(self, resp, explain=None):
@@ -223,7 +223,7 @@ class IMCSServer(object):
         for line in lines:
             if line != ".":
                 try:
-                    indent, gameid, name, color, rating = line.split(" ")
+                    indent, gameid, name, color, rating = line.split(" ")[:5]
                     gameid = int(gameid)
                     color = read_color(color)
                     rating = int(gameid)
