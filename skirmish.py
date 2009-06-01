@@ -1,3 +1,4 @@
+#!/usr/bin/python
 import sys
 import os.path
 import socket
@@ -9,7 +10,7 @@ from optparse import OptionParser
 
 DEFAULT_IMCS_PORT = 3589
 VERBOSE = False
-VERSION = "0.3.0"
+VERSION = "0.3.1"
 
 class ProtocolError(Exception):
     def __init__(self, resp, explain=None):
