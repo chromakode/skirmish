@@ -2,12 +2,14 @@ import sys
 import os.path
 import socket
 import subprocess
+import time
+from collections import defaultdict
 from urlparse import urlparse, ParseResult
 from optparse import OptionParser
 
 DEFAULT_IMCS_PORT = 3589
 VERBOSE = False
-VERSION = "0.2.1"
+VERSION = "0.3.0"
 
 class ProtocolError(Exception):
     def __init__(self, resp, explain=None):
@@ -358,7 +360,7 @@ def game_loop(white_player, black_player, strict=False):
                 print "%s wins." % cur_result
             else:
                 print "The game is a draw."
-            return
+            return cur_result
         
         log("Game", "Sending move \"%s\" to %s" % (move, current.invert.name.lower()))
         players[current.invert].send_move(move)        
@@ -391,6 +393,9 @@ def main():
     parser.add_option("-s", "--strict",
                       action="store_true", dest="strict",
                       help="perform sanity checks")
+    parser.add_option("-t", "--trials",
+                      default=1, dest="trials", type="int",
+                      help="trials to perform [default: %default]")
 
     (options, args) = parser.parse_args()
     
@@ -425,7 +430,38 @@ def main():
         else:
             parser.error("invalid player specified.")
 
-    game_loop(strict=options.strict, *map(parse_player, (WHITE, BLACK), args))
+    results = []
+    durations = []
+    for trial in range(1, options.trials+1):
+        if options.trials > 1:
+            print "--- Beginning trial #%s ---" % trial
+            
+        start_time = time.time()
+        result = game_loop(strict=options.strict, *map(parse_player, (WHITE, BLACK), args))
+        end_time = time.time()
+        
+        results.append(result)
+        durations.append(end_time - start_time)
+        
+    if options.trials > 1:
+        scores = defaultdict(int)
+        for result in results:
+            scores[result] += 1
+        
+        print
+        print "--- Trial results ---"
+        ftrials = float(options.trials)
+        print "Totals:"
+        print "    White: %s\t(%.2f%%)" % (scores[WHITE], 100*scores[WHITE]/ftrials)
+        print "    Black: %s\t(%.2f%%)" % (scores[BLACK], 100*scores[BLACK]/ftrials)
+        print "    Draw:  %s\t(%.2f%%)" % (scores[None],  100*scores[None]/ftrials)
+        print
+        print "Average game time: %.02fs" % (sum(durations)/ftrials)
+        print
+        print "Detailed results:"
+        
+        for trial, (result, duration) in enumerate(zip(results, durations)):
+            print "    Trial #%s: %s\t(%.02fs)" % (trial+1, "Draw" if result is None else result.name, duration)
 
 if __name__ == "__main__":
     main()
