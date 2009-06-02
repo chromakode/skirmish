@@ -10,7 +10,7 @@ from optparse import OptionParser
 
 DEFAULT_IMCS_PORT = 3589
 VERBOSE = False
-VERSION = "0.3.1"
+VERSION = "0.3.2"
 
 class ProtocolError(Exception):
     def __init__(self, resp, explain=None):
@@ -158,7 +158,7 @@ class IOPlayer(Player):
         return resp
 
 def ProcessPlayer(command):
-    process = subprocess.Popen(command, shell=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE, close_fds=True)
+    process = subprocess.Popen(command, shell=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
     command_name = os.path.basename(command.partition(" ")[0])
     return IOPlayer("Process:%s" % command_name, process.stdout, process.stdin)
 
