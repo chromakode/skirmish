@@ -35,6 +35,7 @@ class InvalidURLError(Exception): pass
 class GameNotFoundError(Exception): pass
 class AuthenticationError(Exception): pass
 class MoveError(Exception): pass
+class BadIMCSVersionError(Exception): pass
 
 class Color:
     def __init__(self, short, name, val):
@@ -122,7 +123,7 @@ class CodedConversation(object):
             
     def send_line(self, line):
         self.logger("<-", line)
-        self.out_stream.write(line+"\n")
+        self.out_stream.write(line+"\r\n")
         self.out_stream.flush()
 
     def send(self, code, data):
@@ -189,12 +190,12 @@ class IMCSServer(object):
 
         self.stream = sock.makefile("rw")
         self.io = CodedConversation(self.stream, self.stream, io_logger(self.log))
-        self.io.expect(100)
+        self.io.expect_version("2.3", "2.4")
 
     def disconnect(self):
         self.io.send_line("quit")
         self.stream.close()
-        
+    
     def login(self, username, password):
         self.io.send_line("me %s %s" % (username, password))
         
@@ -214,6 +215,24 @@ class IMCSServer(object):
             self.log("Registered new user \"%s\"." % username)
         elif code == 402:
             raise AuthenticationError(msg)
+
+    def expect_version(self, *versions):
+        line = self.receive_line()
+        
+        code, msg, resp = self._parse_msg(line)
+        if code != 100:
+            raise ExpectedCodeError([100], expected, resp)
+
+        try:
+            server, version = msg.split()
+        except ValueError:
+            raise BadIMCSVersionError(msg)
+
+        if server != "imcs":
+            raise BadIMCSVersionError("not imcs")
+
+        if version not in versions:
+            raise BadIMCSVersionError(version)
 
     def list_games(self):
         self.io.send_line("list")
@@ -245,7 +264,7 @@ class IMCSServer(object):
     def offer(self, color):
         self.io.send_line("offer %s" % color)
         try:
-            code, msg, resp = self.io.expect(101)
+            code, msg, resp = self.io.expect(101, 107, 108)
             gameid = msg.split(" ")[1]
         except:
             gameid = "???"
@@ -259,8 +278,8 @@ class IMCSServer(object):
     def accept(self, gameid):
         self.io.send_line("accept %s" % gameid)
         
-        code, msg, resp = self.io.expect(103, 408)
-        if code == 103:
+        code, msg, resp = self.io.expect(103, 105, 106, 408)
+        if code in [103, 105, 106]:
             self.log("Accepted offer with ID %s" % gameid)
         elif code == 408:
             raise GameNotFoundError(msg)
