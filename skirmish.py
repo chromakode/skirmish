@@ -217,9 +217,7 @@ class IMCSServer(object):
             raise AuthenticationError(msg)
 
     def expect_version(self, *versions):
-        line = self.io.receive_line()
-        
-        code, msg, resp = self._parse_msg(line)
+        code, msg, resp = self.io.expect(100)
         if code != 100:
             raise ExpectedCodeError([100], expected, resp)
 
