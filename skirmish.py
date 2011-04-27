@@ -190,7 +190,7 @@ class IMCSServer(object):
 
         self.stream = sock.makefile("rw")
         self.io = CodedConversation(self.stream, self.stream, io_logger(self.log))
-        self.io.expect_version("2.3", "2.4")
+        self.expect_version("2.3", "2.4")
 
     def disconnect(self):
         self.io.send_line("quit")
