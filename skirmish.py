@@ -233,7 +233,7 @@ class IMCSServer(object):
 
         if version not in versions:
             raise BadIMCSVersionError(version)
-
+        global imcsVersion
         imcsVersion = version
 
     def list_games(self):
@@ -437,22 +437,28 @@ def main():
         global VERBOSE
         VERBOSE = True
     
-    def parse_player(color, text):        
+    def parse_player(phase, color, text):
         if text.startswith("imcs"):
-            try:
-                return play_imcs_url(color, text)
-            except InvalidURLError, e:
-                parser.error("invalid imcs url: %s" % e)
-            except GameNotFoundError:
-                print "Unable to find a suitable offer."
+            if phase == 1:
+                try:
+                    return play_imcs_url(color, text)
+                except InvalidURLError, e:
+                    parser.error("invalid imcs url: %s" % e)
+                except GameNotFoundError:
+                    print "Unable to find a suitable offer."
                 sys.exit()
-
+            return None
+        
         elif text.startswith("run "):
-            return ProcessPlayer(text.partition(" ")[2])
+            if phase == 2:
+                return ProcessPlayer(text.partition(" ")[2])
+            return None
         
         elif text == "-":
-            return IOPlayer()
-            
+            if phase == 2:
+                return IOPlayer()
+            return None
+        
         else:
             parser.error("invalid player specified.")
 
@@ -463,7 +469,14 @@ def main():
             print "--- Beginning trial #%s ---" % trial
             
         start_time = time.time()
-        result = game_loop(strict=options.strict, *map(parse_player, (WHITE, BLACK), args))
+        black_player = None
+        white_player = None
+        for phase in [1, 2]:
+            if white_player == None:
+                white_player = parse_player(phase, WHITE, args[0])
+            if black_player == None:
+                black_player = parse_player(phase, BLACK, args[1])
+        result = game_loop(strict=options.strict, *[white_player, black_player])
         end_time = time.time()
         
         results.append(result)
