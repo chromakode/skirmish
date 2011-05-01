@@ -12,6 +12,8 @@ DEFAULT_IMCS_PORT = 3589
 VERBOSE = False
 VERSION = "0.3.2"
 
+imcsVersion = None
+
 class ProtocolError(Exception):
     def __init__(self, resp, explain=None):
         self.resp = resp
@@ -190,7 +192,7 @@ class IMCSServer(object):
 
         self.stream = sock.makefile("rw")
         self.io = CodedConversation(self.stream, self.stream, io_logger(self.log))
-        self.expect_version("2.3", "2.4")
+        self.expect_version("2.3", "2.4", "2.5")
 
     def disconnect(self):
         self.io.send_line("quit")
@@ -232,6 +234,8 @@ class IMCSServer(object):
         if version not in versions:
             raise BadIMCSVersionError(version)
 
+        imcsVersion = version
+
     def list_games(self):
         self.io.send_line("list")
         self.io.expect(211)
@@ -243,7 +247,13 @@ class IMCSServer(object):
         for line in lines:
             if line != ".":
                 try:
-                    indent, gameid, name, color, rating = line.split(" ")[:5]
+                    if imcsVersion < "2.5":
+                        indent, gameid, name, color, rating = \
+                          line.split(" ")[:5]
+                    else:
+                        indent, gameid, name, color, \
+                        mytime, yourtime, rating = \
+                          line.split(" ")[:7]
                     gameid = int(gameid)
                     color = read_color(color)
                     rating = int(gameid)
@@ -261,23 +271,21 @@ class IMCSServer(object):
     
     def offer(self, color):
         self.io.send_line("offer %s" % color)
-        try:
-            code, msg, resp = self.io.expect(101, 107, 108)
+        code, msg, resp = self.io.expect(103, 107, 108)
+        if imcsVersion < "2.5":
             gameid = msg.split(" ")[1]
-        except:
-            gameid = "???"
-            
+        else:
+            gameid = msg.split(" ")[0]
         self.log("Offered new game as color %s (id: %s)." % (color, gameid))
-        
-        self.io.expect(102)
+        self.io.expect(102, 105, 106)
         self.log("Offer accepted!")
         return self._make_player()
 
     def accept(self, gameid):
         self.io.send_line("accept %s" % gameid)
         
-        code, msg, resp = self.io.expect(103, 105, 106, 408)
-        if code in [103, 105, 106]:
+        code, msg, resp = self.io.expect(105, 106, 408)
+        if code in [105, 106]:
             self.log("Accepted offer with ID %s" % gameid)
         elif code == 408:
             raise GameNotFoundError(msg)
@@ -299,7 +307,7 @@ def connect_imcs_url(url):
         server = IMCSServer(url.hostname, int(port))
     else:
         raise InvalidURLError("Missing hostname.")
-
+    
     server.connect()
     if url.username:
         server.login(url.username, url.password)
