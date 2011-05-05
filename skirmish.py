@@ -85,7 +85,7 @@ class CodedConversation(object):
         self.logger = logger
         
     def _parse_msg(self, resp):
-        code, sep, msg = resp.strip().partition(" ")
+        code, sep, msg = resp.strip(" \r\n").partition(" ")
         try:
             code = int(code)
         except ValueError:
@@ -108,17 +108,18 @@ class CodedConversation(object):
             raise ExpectedCodeError(codes, expected, resp)
 
     def receive_until(self, *codes):
-        lines = []
+        lines = ""
         while True:
             line = self.receive_line()
             if line:
-                lines.append(line)
+                lines += line
             else:
                 return None, None, None, None
             
             code, msg, resp = self._parse_msg(line)
             if code in codes:
-                return code, msg, resp, "\n".join(lines)
+                linelist = lines.splitlines()
+                return code, msg, resp, "\n".join(linelist)
 
     def _make_msg(self, code, msg):
         return "%s %s" % (code, msg)
@@ -241,7 +242,7 @@ class IMCSServer(object):
         self.io.expect(211)
         
         code, msg, resp, text = self.io.receive_until(".")
-        lines = filter(None, text.split("\n"))
+        lines = text.splitlines()
         
         games = list()
         for line in lines:
@@ -256,7 +257,7 @@ class IMCSServer(object):
                           line.split(" ")[:7]
                     gameid = int(gameid)
                     color = read_color(color)
-                    rating = int(gameid)
+                    rating = int(rating)
                     games.append({"id":gameid, "name":name, "color":color, "rating":rating})
                     
                 except ValueError:
