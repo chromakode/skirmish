@@ -281,12 +281,12 @@ class IMCSServer(object):
         self.log("Offer accepted!")
         return self._make_player()
 
-    def accept(self, gameid):
-        self.io.send_line("accept %s" % gameid)
+    def accept(self, gameid, color):
+        self.io.send_line("accept %s %s" % (gameid, color))
         
         code, msg, resp = self.io.expect(105, 106, 408)
         if code in [105, 106]:
-            self.log("Accepted offer with ID %s" % gameid)
+            self.log("Accepted offer as color %s (id: %s)" % (color, gameid))
         elif code == 408:
             raise GameNotFoundError(msg)
             
@@ -317,14 +317,15 @@ def connect_imcs_url(url):
 def play_imcs_url(color, urlstr):
     url = parse_imcs_url(urlstr)
     server = connect_imcs_url(url)
+    servercolor = color.invert.short
     
     if url.path=="/offer":
-        return server.offer(color.invert.short)
+        return server.offer(servercolor)
     elif url.path=="/accept" or url.path=="/":
         query = dict(pair.split("=") if not pair.startswith("rating") else ("rating",pair)
                      for pair in filter(None, url.query.split("&")))
         if "id" in query:
-            return server.accept(query["id"])
+            return server.accept(query["id"], servercolor)
         else:
             # Find a game that matches the constraints in the query
             constraints = list()
@@ -338,7 +339,7 @@ def play_imcs_url(color, urlstr):
                 
             for game in reversed(server.list_games()):
                 if all(constraint(game) for constraint in constraints):
-                    return server.accept(game["id"])
+                    return server.accept(game["id"], servercolor)
             else:
                 raise GameNotFoundError
                 
