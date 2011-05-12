@@ -330,7 +330,7 @@ def play_imcs_url(color, urlstr):
         else:
             # Find a game that matches the constraints in the query
             constraints = list()
-            constraints.append(lambda game: game["color"]==color)
+            constraints.append(lambda game: not game["color"] or game["color"]==color)
             if "name" in query:
                 constraints.append(lambda game: game["name"]==query["name"])
             elif "rating" in query:
