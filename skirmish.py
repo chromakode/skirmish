@@ -248,13 +248,18 @@ class IMCSServer(object):
         for line in lines:
             if line != ".":
                 try:
+                    fields = line.split(" ")
                     if imcsVersion < "2.5":
-                        indent, gameid, name, color, rating = \
-                          line.split(" ")[:5]
+                        indent, gameid, name, color, rating = fields[:5]
                     else:
-                        indent, gameid, name, color, \
-                        mytime, yourtime, rating = \
-                          line.split(" ")[:7]
+                        gametype = fields[len(fields) - 1]
+                        if gametype == "[offer]":
+                            indent, gameid, name, color, \
+                              mytime, yourtime, rating = fields[:7]
+                        elif gametype == "[in-progress]":
+                            continue
+                        else:
+                            raise ProtocolError(line, explain="unknown game type.")
                     gameid = int(gameid)
                     color = read_color(color)
                     rating = int(rating)
